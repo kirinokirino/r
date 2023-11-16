@@ -20,29 +20,27 @@ impl Runner {
 
         let (command, directories) = match mode {
             Mode::Rust => {
-                let command = command.unwrap_or("cargo fmt; cargo clippy --color always -q".into());
+                let command =
+                    command.unwrap_or("cargo fmt; clear; cargo clippy --color always -q".into());
                 let directories = directories.unwrap_or(vec!["src".into()]);
                 (command, directories)
             }
             Mode::Make => {
-                let command = command.unwrap_or("make".into());
-                let directories = directories.unwrap_or(vec![".".into()]);
+                let command = command.unwrap_or("make -s".into());
+                let directories = directories.unwrap_or(vec!["src".into(), ".".into()]);
                 (command, directories)
             }
             Mode::Custom => {
                 let command = command.expect("Command needs to be present for custom mode");
-                let directories = directories.unwrap_or(vec![".".into()]);
+                let directories = directories.unwrap_or(vec!["src".into(), ".".into()]);
                 (command, directories)
             }
         };
 
         for directory in directories {
-            println!("Watching {}", directory);
-
-            inotify
-                .watches()
-                .add(directory, WatchMask::MODIFY)
-                .expect("Failed to add file watch");
+            if let Err(_error) = inotify.watches().add(&directory, WatchMask::MODIFY) {
+                eprintln!("Failed to watch {directory}");
+            }
         }
 
         Self { inotify, command }
@@ -50,6 +48,7 @@ impl Runner {
 
     pub fn run(&mut self) -> ! {
         println!("{}", self.command.clone());
+        self.run_command();
         loop {
             // Read events that were added with `Watches::add` above.
             let mut buffer = [0; 1024];
@@ -58,17 +57,21 @@ impl Runner {
                 .read_events_blocking(&mut buffer)
                 .expect("Error while reading events");
             for _event in events {
-                println!("{}", CLEAR);
-                let output = Command::new("sh")
-                    .arg("-c")
-                    .arg(self.command.clone())
-                    .output();
-                if let Ok(output) = output {
-                    io::stdout().write_all(&output.stdout).unwrap();
-                    io::stderr().write_all(&output.stderr).unwrap();
-                }
+                self.run_command();
             }
             let _ = self.inotify.read_events_blocking(&mut buffer);
+        }
+    }
+
+    fn run_command(&self) {
+        println!("{}", CLEAR);
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(self.command.clone())
+            .output();
+        if let Ok(output) = output {
+            io::stdout().write_all(&output.stdout).unwrap();
+            io::stderr().write_all(&output.stderr).unwrap();
         }
     }
 }
@@ -81,16 +84,12 @@ fn main() {
         Runner::new(mode, None, None)
     } else if args.len() == 2 {
         // provided the custom command, using default directory.
-        let mut args = args.into_iter().rev();
-        let _this_executable = args.next();
-        let command = args.next();
+        let command = Some(args[1].clone());
         Runner::new(Mode::Custom, command, None)
     } else {
         // custom command with custom paths.
-        let mut args = args.into_iter().rev();
-        let _this_executable = args.next();
-        let command = args.next();
-        let directories: Vec<String> = args.collect();
+        let command = Some(args[1].clone());
+        let directories: Vec<String> = args.into_iter().skip(2).collect();
         Runner::new(Mode::Custom, command, Some(directories))
     };
     runner.run();
@@ -100,7 +99,7 @@ fn is_hidden(entry: &DirEntry) -> bool {
     entry
         .file_name()
         .to_str()
-        .map(|s| s.starts_with("."))
+        .map(|s| s.starts_with('.'))
         .unwrap_or(false)
 }
 
