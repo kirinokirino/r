@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 inotify = "0.10.2"
 walkdir = "2.3.3"
+
+confargenv = { version = "0.1", git = "https://github.com/kirinokirino/confargenv" }

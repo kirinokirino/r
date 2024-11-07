@@ -1,10 +1,12 @@
 #![cfg(unix)]
 use inotify::{Inotify, WatchMask};
-use walkdir::{DirEntry, WalkDir};
+use walkdir::WalkDir;
 
-use std::env;
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::process::Command;
+
+use confargenv::fusion;
 
 const CLEAR: &str = "\x1B[2J\x1B[1;1H";
 
@@ -77,30 +79,15 @@ impl Runner {
 }
 
 fn main() {
-    let args = env::args().collect::<Vec<_>>();
-    let mut runner = if args.len() <= 1 {
-        // gussing either rust or make usage.
-        let mode = guess_mode_by_current_directory();
-        Runner::new(mode, None, None)
-    } else if args.len() == 2 {
-        // provided the custom command, using default directory.
-        let command = Some(args[1].clone());
-        Runner::new(Mode::Custom, command, None)
-    } else {
-        // custom command with custom paths.
-        let command = Some(args[1].clone());
-        let directories: Vec<String> = args.into_iter().skip(2).collect();
-        Runner::new(Mode::Custom, command, Some(directories))
-    };
-    runner.run();
-}
+    let conf = Config::new();
 
-fn is_hidden(entry: &DirEntry) -> bool {
-    entry
-        .file_name()
-        .to_str()
-        .map(|s| s.starts_with('.'))
-        .unwrap_or(false)
+    let mode = match conf.command {
+        None => guess_mode_by_current_directory(),
+        Some(_) => Mode::Custom,
+    };
+
+    let mut runner = Runner::new(mode, conf.command, conf.directories);
+    runner.run();
 }
 
 fn guess_mode_by_current_directory() -> Mode {
@@ -134,4 +121,38 @@ enum Mode {
     Rust,
     Make,
     Custom,
+}
+
+#[derive(Debug)]
+struct Config {
+    command: Option<String>,
+    directories: Option<Vec<String>>,
+}
+impl Config {
+    pub fn new() -> Self {
+        let mut defaults = HashMap::new();
+        defaults.insert("command", "");
+        defaults.insert("directories", "");
+
+        let conf = fusion(defaults, None);
+
+        let command = conf.get("command").unwrap();
+        let command = if command.is_empty() {
+            None
+        } else {
+            Some(command.clone())
+        };
+
+        let directories = conf.get("directories").unwrap();
+        let directories = if directories.is_empty() {
+            None
+        } else {
+            Some(directories.split_whitespace().map(String::from).collect())
+        };
+
+        Self {
+            command,
+            directories,
+        }
+    }
 }
